@@ -198,11 +198,19 @@ export interface AgentMetricsParams {
   endDate?: string;
   /** Bucket granularity for the report. */
   interval?: MetricsInterval;
+  /** Alias for `interval` used by the metrics endpoint. */
+  resolution?: MetricsInterval;
   /** Filter results to a single agent. */
   agentId?: string;
   /** Filter results to a single wallet. */
   walletId?: string;
 }
+
+/** Query filters for the global analytics overview. */
+export type GlobalAnalyticsParams = Pick<
+  AgentMetricsParams,
+  'startDate' | 'endDate' | 'resolution'
+>;
 
 /**
  * Query DTO for `GET /analytics/spending/summary`.
@@ -375,4 +383,92 @@ export interface MetricsQueryParams extends TimeRangeQueryParams {
   metric?: TimeSeriesMetric;
   /** Several metric families to aggregate in one request. */
   metrics?: TimeSeriesMetric[];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Telemetry event tracking DTOs (issue #380)                                   */
+/* -------------------------------------------------------------------------- */
+
+/** Severity levels carried by a telemetry event, ordered info → error. */
+export type AnalyticsEventSeverity = 'debug' | 'info' | 'warn' | 'error';
+
+/**
+ * Scoping metadata attached to a telemetry event so events can be correlated
+ * back to the agent, wallet, transaction, or organization that produced them.
+ * Every field is optional — a bare custom event needs none of them.
+ */
+export interface AnalyticsEventContext {
+  /** The agent that emitted the event, when applicable. */
+  agentId?: string;
+  /** The wallet the event relates to, when applicable. */
+  walletId?: string;
+  /** The transaction the event relates to, when applicable. */
+  transactionId?: string;
+  /** The organization that owns the emitting agent/wallet. */
+  organizationId?: string;
+  /** The network the event occurred on (e.g. `"testnet"`). */
+  network?: string;
+}
+
+/** JSON-safe scalar property values accepted on a telemetry event. */
+export type AnalyticsEventPropertyValue = string | number | boolean | null;
+
+/**
+ * Strict, wire-ready telemetry event produced by the analytics client.
+ *
+ * Every field is required: the SDK fills in `id`, `timestamp`, `severity`,
+ * `context`, and `properties` defaults when the caller supplies only an
+ * {@link AnalyticsEventInput}, so batches posted to the telemetry endpoint
+ * are fully normalized before they leave the process.
+ */
+export interface AnalyticsEvent {
+  /** Unique event identifier (ULID/UUID), assigned at record time. */
+  id: string;
+  /** Dotted event name, e.g. `"transaction.completed"` or `"agent.executed"`. */
+  name: string;
+  /** Event severity. Defaults to `"info"`. */
+  severity: AnalyticsEventSeverity;
+  /** ISO-8601 UTC timestamp of when the event occurred. */
+  timestamp: string;
+  /** Correlation metadata (agent, wallet, transaction, …). */
+  context: AnalyticsEventContext;
+  /** Flat, JSON-safe custom properties (durations, counts, amounts, …). */
+  properties: Record<string, AnalyticsEventPropertyValue>;
+}
+
+/**
+ * Caller-facing input for {@link AnalyticsEvent}: `name` is required and
+ * everything else is optional, with sane defaults applied at record time.
+ * `timestamp` accepts a `Date` for convenience and is normalized to an
+ * ISO-8601 UTC string on the wire.
+ */
+export interface AnalyticsEventInput {
+  /** Dotted event name, e.g. `"transaction.completed"`. */
+  name: string;
+  /** Event severity. Defaults to `"info"`. */
+  severity?: AnalyticsEventSeverity;
+  /** When the event occurred. Defaults to "now" when omitted or invalid. */
+  timestamp?: string | Date;
+  /** Correlation metadata (agent, wallet, transaction, …). */
+  context?: AnalyticsEventContext;
+  /** Flat, JSON-safe custom properties. */
+  properties?: Record<string, AnalyticsEventPropertyValue>;
+}
+
+/** The POST body sent to the telemetry ingest endpoint for one batch. */
+export interface AnalyticsEventBatch {
+  /** The normalized events in this batch, in record order. */
+  events: AnalyticsEvent[];
+  /** ISO-8601 UTC timestamp of when the batch was dispatched. */
+  sentAt?: string;
+}
+
+/** Server acknowledgement for a posted {@link AnalyticsEventBatch}. */
+export interface AnalyticsEventBatchAck {
+  /** Events the ingest endpoint accepted. */
+  accepted: number;
+  /** Events the ingest endpoint rejected (e.g. schema violations). */
+  rejected: number;
+  /** Optional server-assigned batch identifier, for tracing. */
+  batchId?: string;
 }
